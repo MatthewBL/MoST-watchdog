@@ -26,4 +26,6 @@ Each configured MoST API is checked with `/health` first. If it is healthy, the 
 
 The watchdog stores the last `squeue` snapshot in `last-squeue.json` and compares it with the next poll. If a job is added, removed, or changes state, it prints a notification payload to the console.
 
+Detailed operational logs are appended to `watchdog.log`. The log includes poll starts, `squeue` commands and results, every MoST API endpoint called, HTTP status and response summaries, notification decisions, Pushbullet outcomes, and state-file writes. Long HTTP responses are truncated to keep the log manageable, and the Pushbullet API token is never logged.
+
 This is a first implementation intended to be extended with real notifications and experiment monitoring.

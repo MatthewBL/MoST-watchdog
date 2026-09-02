@@ -6,9 +6,34 @@ const https = require("https");
 
 const STORAGE_FILE = path.join(__dirname, "last-squeue.json");
 const MOST_API_STORAGE_FILE = path.join(__dirname, "last-most-api.json");
+const LOG_FILE = path.join(__dirname, "watchdog.log");
 const ENV_FILE = path.join(__dirname, ".env");
 const DEFAULT_STILL_ALIVE_MINUTES = 180;
 const MOST_API_ENV_KEYS = ["MOST_API_URL_1", "MOST_API_URL_2", "MOST_API_URL_3"];
+
+function log(message, details) {
+  const timestamp = new Date().toISOString();
+  const suffix = details === undefined ? "" : ` ${JSON.stringify(details)}`;
+  const line = `[${timestamp}] ${message}${suffix}`;
+
+  try {
+    fs.appendFileSync(LOG_FILE, `${line}\n`);
+  } catch (error) {
+    console.error(`[WATCHDOG] Failed to write log: ${error.message}`);
+  }
+}
+
+function summarizeResponse(payload) {
+  if (payload === null || payload === undefined) {
+    return null;
+  }
+
+  const serialized = typeof payload === "string" ? payload : JSON.stringify(payload);
+  const maximumLength = 2000;
+  return serialized.length > maximumLength
+    ? `${serialized.slice(0, maximumLength)}... [truncated]`
+    : serialized;
+}
 
 function sameExperimentReference(left, right) {
   if (!left || !right) {
@@ -76,6 +101,7 @@ function readMostApiState() {
 
 function writeMostApiState(state) {
   fs.writeFileSync(MOST_API_STORAGE_FILE, JSON.stringify(state, null, 2));
+  log("MoST API state stored", { file: MOST_API_STORAGE_FILE });
 }
 
 function deepFindPropertyValue(value, keys) {
@@ -191,6 +217,7 @@ function httpRequestJson(url, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const target = new URL(url);
     const transport = target.protocol === "https:" ? https : http;
+    log("HTTP endpoint called", { method: "GET", endpoint: target.toString() });
 
     const request = transport.get(
       target,
@@ -203,6 +230,7 @@ function httpRequestJson(url, timeoutMs = 15000) {
       (response) => {
         const statusCode = Number(response.statusCode || 0);
         if (statusCode >= 400) {
+          log("HTTP endpoint returned", { method: "GET", endpoint: target.toString(), statusCode, response: null });
           response.resume();
           resolve(null);
           return;
@@ -215,13 +243,27 @@ function httpRequestJson(url, timeoutMs = 15000) {
         });
         response.on("end", () => {
           if (!raw.trim()) {
+            log("HTTP endpoint returned", { method: "GET", endpoint: target.toString(), statusCode, response: null });
             resolve(null);
             return;
           }
 
           try {
-            resolve(JSON.parse(raw));
+            const parsed = JSON.parse(raw);
+            log("HTTP endpoint returned", {
+              method: "GET",
+              endpoint: target.toString(),
+              statusCode,
+              response: summarizeResponse(parsed),
+            });
+            resolve(parsed);
           } catch {
+            log("HTTP endpoint returned invalid JSON", {
+              method: "GET",
+              endpoint: target.toString(),
+              statusCode,
+              response: summarizeResponse(raw),
+            });
             resolve(null);
           }
         });
@@ -229,10 +271,14 @@ function httpRequestJson(url, timeoutMs = 15000) {
     );
 
     request.setTimeout(timeoutMs, () => {
+      log("HTTP endpoint timed out", { method: "GET", endpoint: target.toString(), timeoutMs });
       request.destroy(new Error("Request timed out"));
     });
 
-    request.on("error", reject);
+    request.on("error", (error) => {
+      log("HTTP endpoint failed", { method: "GET", endpoint: target.toString(), error: error.message });
+      reject(error);
+    });
   });
 }
 
@@ -243,8 +289,11 @@ async function isApiAvailable(apiUrl) {
 
   try {
     const healthUrl = new URL("/health", apiUrl).toString();
+    log("Checking MoST API availability", { endpoint: healthUrl });
     const payload = await httpRequestJson(healthUrl, 5000);
-    return Boolean(payload && payload.ok === true);
+    const available = Boolean(payload && payload.ok === true);
+    log("MoST API availability result", { apiUrl, available });
+    return available;
   } catch {
     return false;
   }
@@ -392,7 +441,9 @@ function updateMostApiState(state, apiUrl, kind, record) {
 
 async function pollMostApiChecks() {
   const configuredUrls = getConfiguredMostApiUrls();
+  log("MoST API check started", { configuredApiCount: configuredUrls.length, apiUrls: configuredUrls });
   if (configuredUrls.length === 0) {
+    log("MoST API check skipped", { reason: "no valid API URLs configured" });
     return;
   }
 
@@ -406,14 +457,17 @@ async function pollMostApiChecks() {
 
     const available = await isApiAvailable(normalizedUrl);
     if (!available) {
+      log("MoST API checks skipped", { apiUrl: normalizedUrl, reason: "health check failed" });
       console.log(`[WATCHDOG] MoST API unavailable: ${normalizedUrl}`);
       continue;
     }
 
     const latestFinished = await detectLatestFinishedExperiment(normalizedUrl);
+    log("Latest finished experiment detected", { apiUrl: normalizedUrl, experiment: latestFinished });
     if (latestFinished) {
       const previousLatest = state[normalizedUrl] && state[normalizedUrl].latestFinished;
       if (!sameExperimentReference(previousLatest, latestFinished)) {
+        log("New latest finished experiment found", { apiUrl: normalizedUrl, experiment: latestFinished });
         const body = buildExperimentNotificationBody(normalizedUrl, latestFinished, true);
         sendPushbulletNote("MoST finished experiment", body);
         updateMostApiState(state, normalizedUrl, "latestFinished", latestFinished);
@@ -421,9 +475,11 @@ async function pollMostApiChecks() {
     }
 
     const current = await detectCurrentExperiment(normalizedUrl);
+    log("Current experiment detected", { apiUrl: normalizedUrl, experiment: current });
     if (current) {
       const previousCurrent = state[normalizedUrl] && state[normalizedUrl].current;
       if (!sameExperimentReference(previousCurrent, current)) {
+        log("New current experiment found", { apiUrl: normalizedUrl, experiment: current });
         const body = buildExperimentNotificationBody(normalizedUrl, current, false);
         sendPushbulletNote("MoST current experiment changed", body);
         updateMostApiState(state, normalizedUrl, "current", current);
@@ -507,20 +563,24 @@ function parseArgs() {
 }
 
 function runSqueue() {
+  log("squeue called", { command: "squeue --noheader --Format=jobid,name,state,nodelist" });
   try {
     const output = execSync(
       "squeue --noheader --Format=jobid,name,state,nodelist",
       { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     );
 
-    return output
+    const lines = output
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean);
+    log("squeue returned", { lineCount: lines.length, lines });
+    return lines;
   } catch (error) {
     const stderr = error && error.stderr ? String(error.stderr).trim() : "";
     const stdout = error && error.stdout ? String(error.stdout).trim() : "";
     const message = stderr || stdout || error.message;
+    log("squeue failed", { error: message });
     throw new Error(`squeue failed: ${message}`);
   }
 }
@@ -638,6 +698,7 @@ function sendNotification(changeSet) {
 function sendPushbulletNote(title, body) {
   const token = process.env.PUSHBULLET_API;
   if (!token) {
+    log("Pushbullet notification skipped", { title, reason: "PUSHBULLET_API not configured" });
     console.warn("[WATCHDOG] PUSHBULLET_API not configured. Skipping push notification.");
     return;
   }
@@ -654,6 +715,11 @@ function sendPushbulletNote(title, body) {
   }
 
   try {
+    log("Pushbullet notification called", {
+      title,
+      deviceId: deviceId || "all devices",
+      body: summarizeResponse(body),
+    });
     const response = execSync(
       `curl -sS -X POST https://api.pushbullet.com/v2/pushes -u "${token}:" -H "Content-Type: application/json" -d '${JSON.stringify(payload).replace(/'/g, "'\\''")}'`,
       {
@@ -664,15 +730,18 @@ function sendPushbulletNote(title, body) {
 
     const parsed = JSON.parse(response);
     if (parsed && parsed.error) {
+      log("Pushbullet notification failed", { title, response: summarizeResponse(parsed) });
       console.error("[WATCHDOG] Pushbullet error:", parsed.error.message || parsed.error);
       return;
     }
 
     console.log("[WATCHDOG] Pushbullet notification sent");
+    log("Pushbullet notification sent", { title, response: summarizeResponse(parsed) });
   } catch (error) {
     const stdout = error && error.stdout ? String(error.stdout).trim() : "";
     const stderr = error && error.stderr ? String(error.stderr).trim() : "";
     const text = stdout || stderr || error.message;
+    log("Pushbullet notification failed", { title, error: text });
     console.error("[WATCHDOG] Failed to send Pushbullet notification:", text);
   }
 }
@@ -692,6 +761,7 @@ function sendStillAliveNotification(intervalMinutes) {
 }
 
 async function pollOnce() {
+  log("Watchdog poll started");
   const previousSnapshot = readLastSnapshot();
   const currentLines = runSqueue();
   const currentJobs = normalizeJobs(currentLines);
@@ -732,6 +802,7 @@ async function pollOnce() {
   };
 
   writeSnapshot(nextSnapshot);
+  log("squeue snapshot stored", { file: STORAGE_FILE, jobCount: currentJobs.length });
 
   try {
     await pollMostApiChecks();
