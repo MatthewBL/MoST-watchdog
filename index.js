@@ -170,8 +170,41 @@ function diffJobs(previousJobs, currentJobs) {
 }
 
 function sendNotification(changeSet) {
+  const added = changeSet.added || [];
+  const removed = changeSet.removed || [];
+  const changed = changeSet.changed || [];
+
+  const lines = [];
+
+  if (added.length > 0) {
+    for (const entry of added) {
+      const job = entry.job || {};
+      lines.push(`Added job: ${job.jobId || "unknown"} | ${job.name || "unknown"} | ${job.state || "unknown"} | ${job.node || "unknown"}`);
+    }
+  }
+
+  if (removed.length > 0) {
+    for (const entry of removed) {
+      const job = entry.job || {};
+      lines.push(`Removed job: ${job.jobId || "unknown"} | ${job.name || "unknown"} | ${job.state || "unknown"} | ${job.node || "unknown"}`);
+    }
+  }
+
+  if (changed.length > 0) {
+    for (const entry of changed) {
+      const fields = (entry.fields || []).join("; ");
+      lines.push(`Changed job: ${entry.jobId || "unknown"} | ${fields}`);
+    }
+  }
+
+  const summary = lines.join("\n");
+
   console.log("[WATCHDOG] Job change detected");
   console.log(JSON.stringify(changeSet, null, 2));
+
+  if (summary) {
+    sendPushbulletNote("Watchdog job change", summary);
+  }
 }
 
 function sendPushbulletNote(title, body) {
