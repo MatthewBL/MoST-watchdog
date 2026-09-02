@@ -1,0 +1,10 @@
+{
+  "name": "most-watchdog",
+  "version": "1.0.0",
+  "description": "Console-based watchdog for monitoring Slurm jobs and experiment state.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "watch": "node index.js --loop --interval 300000"
+  }
+}
