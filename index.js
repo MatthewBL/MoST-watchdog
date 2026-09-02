@@ -68,7 +68,6 @@ function sameExperimentReference(left, right) {
   }
 
   return String(left.experiment || "") === String(right.experiment || "")
-    && String(left.iteration || "") === String(right.iteration || "")
     && String(left.url || "") === String(right.url || "");
 }
 
