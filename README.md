@@ -70,6 +70,7 @@ Run the Watchdog on a machine that has:
 - Access to the Slurm command `squeue` and permission to query the relevant
 	jobs.
 - Network access to one or more running MoST-API instances.
+- Network access to the device to be notified, most likely through the public network.
 - `curl`, if Pushbullet notifications are enabled.
 - A Pushbullet access token, if remote notifications are required.
 
