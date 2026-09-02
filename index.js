@@ -13,20 +13,29 @@ const MOST_API_ENV_KEYS = ["MOST_API_URL_1", "MOST_API_URL_2", "MOST_API_URL_3"]
 const FINISHED_RESULT_FIELDS = [
   "FINISHED",
   "MODEL_USED",
+  "URL",
   "MIN_INPUT_TOKENS",
   "MAX_INPUT_TOKENS",
   "MIN_OUTPUT_TOKENS",
   "MAX_OUTPUT_TOKENS",
-  "URL",
   "LARGEST_TRUE",
 ];
 const CURRENT_RESULT_FIELDS = [
   "MODEL_USED",
+  "URL",
   "MIN_INPUT_TOKENS",
   "MAX_INPUT_TOKENS",
   "MIN_OUTPUT_TOKENS",
   "MAX_OUTPUT_TOKENS",
+];
+const FOUR_FAILED_RESULT_FIELDS = [
+  "MODEL_USED",
   "URL",
+  "MIN_INPUT_TOKENS",
+  "MAX_INPUT_TOKENS",
+  "MIN_OUTPUT_TOKENS",
+  "MAX_OUTPUT_TOKENS",
+  "LARGEST_TRUE",
 ];
 
 function log(message, details) {
@@ -218,6 +227,18 @@ function extractExperimentSummary(payload) {
   return summary;
 }
 
+function extractFirstResultSummary(payload) {
+  if (!payload || typeof payload !== "object") {
+    return {};
+  }
+
+  if (Array.isArray(payload.rows) && payload.rows.length > 0) {
+    return extractExperimentSummary(payload.rows[0]);
+  }
+
+  return extractExperimentSummary(payload);
+}
+
 function hasFinishedFlag(payload) {
   if (!payload || typeof payload !== "object") {
     return false;
@@ -340,11 +361,11 @@ async function fetchResultCsvFields(apiUrl, experiment, iteration, fields) {
 function formatExperimentSummaryFields(summary, includeLargestTrue) {
   const orderedKeys = [
     "MODEL_USED",
+    "URL",
     "MIN_INPUT_TOKENS",
     "MAX_INPUT_TOKENS",
     "MIN_OUTPUT_TOKENS",
     "MAX_OUTPUT_TOKENS",
-    "URL",
   ];
 
   if (includeLargestTrue) {
@@ -371,6 +392,16 @@ function buildExperimentNotificationBody(apiUrl, record, includeLargestTrue) {
   ];
 
   return lines.join("\n");
+}
+
+function buildFourFailedNotificationBody(apiUrl, record) {
+  return [
+    `API: ${apiUrl}`,
+    `Experiment: ${record.experiment}`,
+    `Latest iteration: ${record.iteration}`,
+    "The last four iterations failed.",
+    ...formatExperimentSummaryFields(record.summary || {}, true),
+  ].join("\n");
 }
 
 async function detectLatestFinishedExperiment(apiUrl) {
@@ -457,6 +488,45 @@ async function detectCurrentExperiment(apiUrl) {
   };
 }
 
+async function detectFourFailedIterations(apiUrl) {
+  const current = await detectCurrentExperiment(apiUrl);
+  if (!current) {
+    return null;
+  }
+
+  const failureStatus = await fetchMostApiJson(
+    apiUrl,
+    `/api/experiments/${encodeURIComponent(current.experiment)}/last-four-failed`,
+  );
+
+  if (!failureStatus || failureStatus.lastFourFailed !== true || !Array.isArray(failureStatus.checkedIterations)) {
+    return null;
+  }
+
+  const recentIteration = failureStatus.checkedIterations[0];
+  if (!recentIteration) {
+    return null;
+  }
+
+  const resultPayload = await fetchResultCsvFields(
+    apiUrl,
+    current.experiment,
+    recentIteration,
+    FOUR_FAILED_RESULT_FIELDS,
+  );
+  const summary = extractFirstResultSummary(resultPayload);
+  if (!summary.URL) {
+    return null;
+  }
+
+  return {
+    experiment: current.experiment,
+    iteration: String(recentIteration),
+    url: summary.URL,
+    summary,
+  };
+}
+
 function updateMostApiState(state, apiUrl, kind, record) {
   const target = state && typeof state === "object" ? state : {};
   const current = target[apiUrl] && typeof target[apiUrl] === "object" ? target[apiUrl] : {};
@@ -517,6 +587,18 @@ async function pollMostApiChecks() {
         const body = buildExperimentNotificationBody(normalizedUrl, current, false);
         sendPushbulletNote("MoST current experiment changed", body);
         updateMostApiState(state, normalizedUrl, "current", current);
+      }
+    }
+
+    const fourFailed = await detectFourFailedIterations(normalizedUrl);
+    log("Four-failed-iterations result", { apiUrl: normalizedUrl, experiment: fourFailed });
+    if (fourFailed) {
+      const previousFourFailed = state[normalizedUrl] && state[normalizedUrl].fourFailed;
+      if (!sameExperimentReference(previousFourFailed, fourFailed)) {
+        log("Four consecutive failed iterations found", { apiUrl: normalizedUrl, experiment: fourFailed });
+        const body = buildFourFailedNotificationBody(normalizedUrl, fourFailed);
+        sendPushbulletNote("MoST four failed iterations", body);
+        updateMostApiState(state, normalizedUrl, "fourFailed", fourFailed);
       }
     }
   }
@@ -884,5 +966,6 @@ module.exports = {
   hasFinishedFlag,
   detectLatestFinishedExperiment,
   detectCurrentExperiment,
+  detectFourFailedIterations,
   pollMostApiChecks,
 };

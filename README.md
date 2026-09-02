@@ -26,6 +26,8 @@ Each configured MoST API is checked with `/health` first. If it is healthy, the 
 
 Experiment checks use the parsed `results.csv` endpoint with a `fields` query parameter, so the watchdog does not download the large `results.json` file.
 
+For the active experiment, the watchdog also calls `/api/experiments/:experiment/last-four-failed`. When the endpoint reports four consecutive failures, it sends a Pushbullet notification containing the newest iteration's `MODEL_USED`, `URL`, token limits, and `LARGEST_TRUE` values.
+
 The watchdog stores the last `squeue` snapshot in `last-squeue.json` and compares it with the next poll. If a job is added, removed, or changes state, it prints a notification payload to the console.
 
 Detailed operational logs are appended to `watchdog.log`. The log includes poll starts, `squeue` commands and results, every MoST API endpoint called, HTTP status and response summaries, notification decisions, Pushbullet outcomes, and state-file writes. Long HTTP responses are truncated to keep the log manageable, and the Pushbullet API token is never logged.
