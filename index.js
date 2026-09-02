@@ -16,7 +16,8 @@ function sameExperimentReference(left, right) {
   }
 
   return String(left.experiment || "") === String(right.experiment || "")
-    && String(left.iteration || "") === String(right.iteration || "");
+    && String(left.iteration || "") === String(right.iteration || "")
+    && String(left.url || "") === String(right.url || "");
 }
 
 function normalizeMostApiUrl(value) {
@@ -150,6 +151,8 @@ function extractExperimentSummary(payload) {
     "MAX_OUTPUT_TOKENS",
     "max_output_tokens",
     "maxOutputTokens",
+    "URL",
+    "url",
     "LARGEST_TRUE",
     "largest_true",
     "largestTrue",
@@ -256,15 +259,19 @@ async function fetchMostApiJson(apiUrl, relativePath) {
   }
 }
 
-function formatExperimentSummaryFields(summary) {
+function formatExperimentSummaryFields(summary, includeLargestTrue) {
   const orderedKeys = [
     "MODEL_USED",
     "MIN_INPUT_TOKENS",
     "MAX_INPUT_TOKENS",
     "MIN_OUTPUT_TOKENS",
     "MAX_OUTPUT_TOKENS",
-    "LARGEST_TRUE",
+    "URL",
   ];
+
+  if (includeLargestTrue) {
+    orderedKeys.push("LARGEST_TRUE");
+  }
 
   const lines = [];
   for (const key of orderedKeys) {
@@ -277,12 +284,12 @@ function formatExperimentSummaryFields(summary) {
   return lines;
 }
 
-function buildExperimentNotificationBody(apiUrl, record) {
+function buildExperimentNotificationBody(apiUrl, record, includeLargestTrue) {
   const lines = [
     `API: ${apiUrl}`,
     `Experiment: ${record.experiment}`,
     `Iteration: ${record.iteration}`,
-    ...formatExperimentSummaryFields(record.summary || {}),
+    ...formatExperimentSummaryFields(record.summary || {}, includeLargestTrue),
   ];
 
   return lines.join("\n");
@@ -320,10 +327,16 @@ async function detectLatestFinishedExperiment(apiUrl) {
         continue;
       }
 
+      const summary = extractExperimentSummary(resultPayload);
+      if (!summary.URL) {
+        continue;
+      }
+
       return {
         experiment,
         iteration,
-        summary: extractExperimentSummary(resultPayload),
+        url: summary.URL,
+        summary,
       };
     }
   }
@@ -348,10 +361,16 @@ async function detectCurrentExperiment(apiUrl) {
     return null;
   }
 
+  const summary = extractExperimentSummary(resultPayload);
+  if (!summary.URL) {
+    return null;
+  }
+
   return {
     experiment,
     iteration,
-    summary: extractExperimentSummary(resultPayload),
+    url: summary.URL,
+    summary,
   };
 }
 
@@ -362,6 +381,7 @@ function updateMostApiState(state, apiUrl, kind, record) {
   current[kind] = {
     experiment: record.experiment,
     iteration: record.iteration,
+    url: record.url,
     summary: record.summary || {},
     observedAt: new Date().toISOString(),
   };
@@ -394,7 +414,7 @@ async function pollMostApiChecks() {
     if (latestFinished) {
       const previousLatest = state[normalizedUrl] && state[normalizedUrl].latestFinished;
       if (!sameExperimentReference(previousLatest, latestFinished)) {
-        const body = buildExperimentNotificationBody(normalizedUrl, latestFinished);
+        const body = buildExperimentNotificationBody(normalizedUrl, latestFinished, true);
         sendPushbulletNote("MoST finished experiment", body);
         updateMostApiState(state, normalizedUrl, "latestFinished", latestFinished);
       }
@@ -404,7 +424,7 @@ async function pollMostApiChecks() {
     if (current) {
       const previousCurrent = state[normalizedUrl] && state[normalizedUrl].current;
       if (!sameExperimentReference(previousCurrent, current)) {
-        const body = buildExperimentNotificationBody(normalizedUrl, current);
+        const body = buildExperimentNotificationBody(normalizedUrl, current, false);
         sendPushbulletNote("MoST current experiment changed", body);
         updateMostApiState(state, normalizedUrl, "current", current);
       }
