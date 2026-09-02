@@ -3,6 +3,45 @@ const path = require("node:path");
 const { execSync } = require("node:child_process");
 
 const STORAGE_FILE = path.join(__dirname, "last-squeue.json");
+const ENV_FILE = path.join(__dirname, ".env");
+const DEFAULT_STILL_ALIVE_MINUTES = 180;
+
+function loadDotEnv() {
+  try {
+    const envText = fs.readFileSync(ENV_FILE, "utf8");
+    const lines = envText.split(/\r?\n/);
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) {
+        continue;
+      }
+
+      const separatorIndex = trimmed.indexOf("=");
+      const key = trimmed.slice(0, separatorIndex).trim();
+      const rawValue = trimmed.slice(separatorIndex + 1).trim();
+      const value = rawValue.replace(/^['"]|['"]$/g, "");
+      if (key && !Object.prototype.hasOwnProperty.call(process.env, key)) {
+        process.env[key] = value;
+      }
+    }
+  } catch {
+    // Ignore missing .env file.
+  }
+}
+
+loadDotEnv();
+
+function getStillAliveIntervalMinutes() {
+  const rawValue = process.env.WATCHDOG_STILL_ALIVE_MINUTES || process.env.STILL_ALIVE_INTERVAL_MINUTES;
+  const parsed = Number(rawValue ?? DEFAULT_STILL_ALIVE_MINUTES);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_STILL_ALIVE_MINUTES;
+  }
+
+  return parsed;
+}
 
 function readLastSnapshot() {
   try {
@@ -135,10 +174,22 @@ function sendNotification(changeSet) {
   console.log(JSON.stringify(changeSet, null, 2));
 }
 
+function sendStillAliveNotification(intervalMinutes) {
+  console.log("[WATCHDOG] Still alive");
+  console.log(JSON.stringify({
+    type: "still_alive",
+    intervalMinutes,
+    timestamp: new Date().toISOString(),
+  }, null, 2));
+}
+
 function pollOnce() {
   const previousSnapshot = readLastSnapshot();
   const currentLines = runSqueue();
   const currentJobs = normalizeJobs(currentLines);
+  const now = new Date();
+  const intervalMinutes = getStillAliveIntervalMinutes();
+  const intervalMs = intervalMinutes * 60 * 1000;
 
   const changeSet = previousSnapshot
     ? diffJobs(previousSnapshot.jobs || [], currentJobs)
@@ -150,14 +201,25 @@ function pollOnce() {
     changeSet.removed.length > 0 ||
     changeSet.changed.length > 0;
 
+  const lastHeartbeatAt = previousSnapshot && previousSnapshot.lastHeartbeatAt
+    ? new Date(previousSnapshot.lastHeartbeatAt).getTime()
+    : null;
+
+  const heartbeatDue = !lastHeartbeatAt || now.getTime() - lastHeartbeatAt >= intervalMs;
+
   if (previousSnapshot && hasChanges) {
     sendNotification(changeSet);
   } else if (!previousSnapshot) {
     console.log("[WATCHDOG] No previous snapshot found. Storing initial baseline.");
   }
 
+  if (previousSnapshot && heartbeatDue) {
+    sendStillAliveNotification(intervalMinutes);
+  }
+
   const nextSnapshot = {
-    capturedAt: new Date().toISOString(),
+    capturedAt: now.toISOString(),
+    lastHeartbeatAt: heartbeatDue ? now.toISOString() : previousSnapshot && previousSnapshot.lastHeartbeatAt ? previousSnapshot.lastHeartbeatAt : null,
     jobs: currentJobs,
   };
 
@@ -166,6 +228,7 @@ function pollOnce() {
   console.log(JSON.stringify({
     capturedAt: nextSnapshot.capturedAt,
     jobCount: currentJobs.length,
+    intervalMinutes,
   }, null, 2));
 }
 
