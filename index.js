@@ -10,6 +10,24 @@ const LOG_FILE = path.join(__dirname, "watchdog.log");
 const ENV_FILE = path.join(__dirname, ".env");
 const DEFAULT_STILL_ALIVE_MINUTES = 180;
 const MOST_API_ENV_KEYS = ["MOST_API_URL_1", "MOST_API_URL_2", "MOST_API_URL_3"];
+const FINISHED_RESULT_FIELDS = [
+  "FINISHED",
+  "MODEL_USED",
+  "MIN_INPUT_TOKENS",
+  "MAX_INPUT_TOKENS",
+  "MIN_OUTPUT_TOKENS",
+  "MAX_OUTPUT_TOKENS",
+  "URL",
+  "LARGEST_TRUE",
+];
+const CURRENT_RESULT_FIELDS = [
+  "MODEL_USED",
+  "MIN_INPUT_TOKENS",
+  "MAX_INPUT_TOKENS",
+  "MIN_OUTPUT_TOKENS",
+  "MAX_OUTPUT_TOKENS",
+  "URL",
+];
 
 function log(message, details) {
   const timestamp = new Date().toISOString();
@@ -313,6 +331,12 @@ async function fetchMostApiJson(apiUrl, relativePath) {
   }
 }
 
+async function fetchResultCsvFields(apiUrl, experiment, iteration, fields) {
+  const query = encodeURIComponent(fields.join(","));
+  const relativePath = `/api/experiments/${encodeURIComponent(experiment)}/iterations/${encodeURIComponent(iteration)}/results.csv?fields=${query}`;
+  return fetchMostApiJson(apiUrl, relativePath);
+}
+
 function formatExperimentSummaryFields(summary, includeLargestTrue) {
   const orderedKeys = [
     "MODEL_USED",
@@ -372,9 +396,11 @@ async function detectLatestFinishedExperiment(apiUrl) {
       .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: "base" }));
 
     for (const iteration of sortedIterations) {
-      const resultPayload = await fetchMostApiJson(
+      const resultPayload = await fetchResultCsvFields(
         apiUrl,
-        `/api/experiments/${encodeURIComponent(experiment)}/iterations/${encodeURIComponent(iteration)}/download/results.json`,
+        experiment,
+        iteration,
+        FINISHED_RESULT_FIELDS,
       );
 
       if (!resultPayload || !hasFinishedFlag(resultPayload)) {
@@ -406,9 +432,11 @@ async function detectCurrentExperiment(apiUrl) {
 
   const experiment = String(currentPayload.experiment);
   const iteration = String(currentPayload.iteration);
-  const resultPayload = await fetchMostApiJson(
+  const resultPayload = await fetchResultCsvFields(
     apiUrl,
-    `/api/experiments/${encodeURIComponent(experiment)}/iterations/${encodeURIComponent(iteration)}/download/results.json`,
+    experiment,
+    iteration,
+    CURRENT_RESULT_FIELDS,
   );
 
   if (!resultPayload) {
