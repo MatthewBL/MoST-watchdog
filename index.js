@@ -174,13 +174,60 @@ function sendNotification(changeSet) {
   console.log(JSON.stringify(changeSet, null, 2));
 }
 
+function sendPushbulletNote(title, body) {
+  const token = process.env.PUSHBULLET_API;
+  if (!token) {
+    console.warn("[WATCHDOG] PUSHBULLET_API not configured. Skipping push notification.");
+    return;
+  }
+
+  const payload = {
+    type: "note",
+    title,
+    body,
+  };
+
+  const deviceId = process.env.PUSHBULLET_DEVICE_ID;
+  if (deviceId) {
+    payload.device_iden = deviceId;
+  }
+
+  try {
+    const response = execSync(
+      `curl -sS -X POST https://api.pushbullet.com/v2/pushes -u "${token}:" -H "Content-Type: application/json" -d '${JSON.stringify(payload).replace(/'/g, "'\\''")}'`,
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    const parsed = JSON.parse(response);
+    if (parsed && parsed.error) {
+      console.error("[WATCHDOG] Pushbullet error:", parsed.error.message || parsed.error);
+      return;
+    }
+
+    console.log("[WATCHDOG] Pushbullet notification sent");
+  } catch (error) {
+    const stdout = error && error.stdout ? String(error.stdout).trim() : "";
+    const stderr = error && error.stderr ? String(error.stderr).trim() : "";
+    const text = stdout || stderr || error.message;
+    console.error("[WATCHDOG] Failed to send Pushbullet notification:", text);
+  }
+}
+
 function sendStillAliveNotification(intervalMinutes) {
+  const timestamp = new Date().toISOString();
+  const body = `Watchdog is still alive.\nInterval: ${intervalMinutes} minutes\nTimestamp: ${timestamp}`;
+
   console.log("[WATCHDOG] Still alive");
   console.log(JSON.stringify({
     type: "still_alive",
     intervalMinutes,
-    timestamp: new Date().toISOString(),
+    timestamp,
   }, null, 2));
+
+  sendPushbulletNote("Watchdog still alive", body);
 }
 
 function pollOnce() {
