@@ -34,7 +34,7 @@ loadDotEnv();
 
 function getStillAliveIntervalMinutes() {
   const rawValue = process.env.WATCHDOG_STILL_ALIVE_MINUTES || process.env.STILL_ALIVE_INTERVAL_MINUTES;
-  const parsed = Number(rawValue ?? DEFAULT_STILL_ALIVE_MINUTES);
+  const parsed = Number(rawValue !== undefined && rawValue !== null ? rawValue : DEFAULT_STILL_ALIVE_MINUTES);
 
   if (!Number.isFinite(parsed) || parsed <= 0) {
     return DEFAULT_STILL_ALIVE_MINUTES;
