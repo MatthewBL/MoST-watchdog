@@ -382,6 +382,7 @@ async function detectLatestFinishedExperiment(apiUrl) {
   const sortedExperiments = experiments
     .map((experiment) => String(experiment))
     .filter(Boolean)
+    .filter((experiment) => /^MST[-_]\d+$/i.test(experiment))
     .sort((a, b) => b.localeCompare(a));
 
   for (const experiment of sortedExperiments) {
