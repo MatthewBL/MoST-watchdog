@@ -55,16 +55,21 @@ function normalizeMostApiUrl(value) {
     return null;
   }
 
-  try {
-    const parsed = new URL(trimmed);
-    if (["http:", "https:"].includes(parsed.protocol) && parsed.hostname) {
-      return `${parsed.protocol}//${parsed.host}`;
-    }
-  } catch {
-    // Ignore invalid values and treat them as unavailable.
+  let candidate = trimmed;
+  if (!/^[a-z][a-z\d+.-]*:\/\//i.test(candidate)) {
+    candidate = `http://${candidate}`;
   }
 
-  return null;
+  try {
+    const parsed = new URL(candidate);
+    if (!["http:", "https:"].includes(parsed.protocol) || !parsed.hostname) {
+      return null;
+    }
+
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return null;
+  }
 }
 
 function getConfiguredMostApiUrls() {
