@@ -678,10 +678,11 @@ function parseArgs() {
 }
 
 function runSqueue() {
-  log("squeue called", { command: "squeue --noheader --Format=jobid,name,state,nodelist" });
+  const command = "squeue --noheader --parsable2 --Format=jobid,name,state,nodelist";
+  log("squeue called", { command });
   try {
     const output = execSync(
-      "squeue --noheader --Format=jobid,name,state,nodelist",
+      command,
       { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     );
 
@@ -701,17 +702,17 @@ function runSqueue() {
 }
 
 function parseSqueueLine(line) {
-  const parts = line.trim().split(/\s+/);
+  const parts = line.split("|");
   if (parts.length < 4) {
     return null;
   }
 
-  const [jobId, name, state, ...nodeParts] = parts;
+  const [jobId, name, state, node] = parts;
   return {
-    jobId,
-    name,
-    state,
-    node: nodeParts.join(" ") || "unknown",
+    jobId: jobId.trim(),
+    name: name.trim(),
+    state: state.trim(),
+    node: node.trim() || "unknown",
   };
 }
 
