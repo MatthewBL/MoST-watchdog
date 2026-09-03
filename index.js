@@ -678,7 +678,7 @@ function parseArgs() {
 }
 
 function runSqueue() {
-  const command = "squeue --noheader --parsable2 --Format=jobid,name,state,nodelist";
+  const command = 'squeue --noheader --format="%i|%j|%T|%N"';
   log("squeue called", { command });
   try {
     const output = execSync(
