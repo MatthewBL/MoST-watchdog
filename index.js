@@ -68,6 +68,7 @@ function sameExperimentReference(left, right) {
   }
 
   return String(left.experiment || "") === String(right.experiment || "")
+    && String(left.iteration || "") === String(right.iteration || "")
     && String(left.url || "") === String(right.url || "");
 }
 
@@ -409,13 +410,14 @@ async function detectLatestFinishedExperiment(apiUrl) {
     ? experimentsPayload.experiments.slice()
     : [];
 
-  const sortedExperiments = experiments
-    .map((experiment) => String(experiment))
-    .filter(Boolean)
-    .filter((experiment) => /^MST[-_]\d+$/i.test(experiment))
-    .sort((a, b) => b.localeCompare(a));
+  let latestExperiment = null;
 
-  for (const experiment of sortedExperiments) {
+  for (const rawExperiment of experiments) {
+    const experiment = String(rawExperiment).trim();
+    if (!experiment) {
+      continue;
+    }
+
     const iterationsPayload = await fetchMostApiJson(apiUrl, `/api/experiments/${encodeURIComponent(experiment)}/iterations`);
     const iterations = Array.isArray(iterationsPayload && iterationsPayload.iterations)
       ? iterationsPayload.iterations.slice()
@@ -426,33 +428,44 @@ async function detectLatestFinishedExperiment(apiUrl) {
       .filter(Boolean)
       .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: "base" }));
 
-    for (const iteration of sortedIterations) {
-      const resultPayload = await fetchResultCsvFields(
-        apiUrl,
-        experiment,
-        iteration,
-        FINISHED_RESULT_FIELDS,
-      );
-
-      if (!resultPayload || !hasFinishedFlag(resultPayload)) {
-        continue;
-      }
-
-      const summary = extractExperimentSummary(resultPayload);
-      if (!summary.URL) {
-        continue;
-      }
-
-      return {
-        experiment,
-        iteration,
-        url: summary.URL,
-        summary,
-      };
+    const iteration = sortedIterations[0];
+    if (!iteration || (latestExperiment && iteration.localeCompare(
+      latestExperiment.iteration,
+      undefined,
+      { numeric: true, sensitivity: "base" },
+    ) <= 0)) {
+      continue;
     }
+
+    latestExperiment = { experiment, iteration };
   }
 
-  return null;
+  if (!latestExperiment) {
+    return null;
+  }
+
+  const resultPayload = await fetchResultCsvFields(
+    apiUrl,
+    latestExperiment.experiment,
+    latestExperiment.iteration,
+    FINISHED_RESULT_FIELDS,
+  );
+
+  if (!resultPayload || !hasFinishedFlag(resultPayload)) {
+    return null;
+  }
+
+  const summary = extractExperimentSummary(resultPayload);
+  if (!summary.URL) {
+    return null;
+  }
+
+  return {
+    experiment: latestExperiment.experiment,
+    iteration: latestExperiment.iteration,
+    url: summary.URL,
+    summary,
+  };
 }
 
 async function detectCurrentExperiment(apiUrl) {
