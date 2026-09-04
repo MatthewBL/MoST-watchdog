@@ -53,7 +53,8 @@ On every poll, the Watchdog:
 For experiment notifications it requests selected fields from parsed
 `results.csv` data, rather than downloading the potentially large
 `results.json`. Notifications can include the model, endpoint, token limits,
-and `LARGEST_TRUE`.
+and, for four-failed-iteration notifications, `LARGEST_TRUE` and
+`SMALLEST_FALSE`.
 
 The first poll creates a baseline and does not report it as a job change. Later
 polls compare against that baseline. State is stored in:

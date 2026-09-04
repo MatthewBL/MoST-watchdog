@@ -36,6 +36,7 @@ const FOUR_FAILED_RESULT_FIELDS = [
   "MIN_OUTPUT_TOKENS",
   "MAX_OUTPUT_TOKENS",
   "LARGEST_TRUE",
+  "SMALLEST_FALSE",
 ];
 
 function log(message, details) {
@@ -213,6 +214,9 @@ function extractExperimentSummary(payload) {
     "LARGEST_TRUE",
     "largest_true",
     "largestTrue",
+    "SMALLEST_FALSE",
+    "smallest_false",
+    "smallestFalse",
   ];
 
   const summary = {};
@@ -357,7 +361,7 @@ async function fetchResultCsvFields(apiUrl, experiment, iteration, fields) {
   return fetchMostApiJson(apiUrl, relativePath);
 }
 
-function formatExperimentSummaryFields(summary, includeLargestTrue) {
+function formatExperimentSummaryFields(summary, includeLargestTrue, includeSmallestFalse) {
   const orderedKeys = [
     "MODEL_USED",
     "URL",
@@ -369,6 +373,10 @@ function formatExperimentSummaryFields(summary, includeLargestTrue) {
 
   if (includeLargestTrue) {
     orderedKeys.push("LARGEST_TRUE");
+  }
+
+  if (includeSmallestFalse) {
+    orderedKeys.push("SMALLEST_FALSE");
   }
 
   const lines = [];
@@ -399,7 +407,7 @@ function buildFourFailedNotificationBody(apiUrl, record) {
     `Experiment: ${record.experiment}`,
     `Latest iteration: ${record.iteration}`,
     "The last four iterations failed.",
-    ...formatExperimentSummaryFields(record.summary || {}, true),
+    ...formatExperimentSummaryFields(record.summary || {}, true, true),
   ].join("\n");
 }
 
